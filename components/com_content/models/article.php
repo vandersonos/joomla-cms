@@ -81,165 +81,158 @@ class ContentModelArticle extends JModelItem
 
 		if (!isset($this->_item[$pk]))
 		{
+			$db = $this->getDbo();
+			$query = $db->getQuery(true)
+				->select(
+					$this->getState(
+						'item.select', 'a.id, a.asset_id, a.title, a.alias, a.introtext, a.fulltext, ' .
+						// If badcats is not null, this means that the article is inside an unpublished category
+						// In this case, the state is set to 0 to indicate Unpublished (even if the article state is Published)
+						'CASE WHEN badcats.id is null THEN a.state ELSE 0 END AS state, ' .
+						'a.catid, a.created, a.created_by, a.created_by_alias, ' .
+						// Use created if modified is 0
+						'CASE WHEN a.modified = ' . $db->quote($db->getNullDate()) . ' THEN a.created ELSE a.modified END as modified, ' .
+						'a.modified_by, a.checked_out, a.checked_out_time, a.publish_up, a.publish_down, ' .
+						'a.images, a.urls, a.attribs, a.version, a.ordering, ' .
+						'a.metakey, a.metadesc, a.access, a.hits, a.metadata, a.featured, a.language, a.xreference'
+					)
+				);
+			$query->from('#__content AS a');
+
+			// Join on category table.
+			$query->select('c.title AS category_title, c.alias AS category_alias, c.access AS category_access')
+				->join('LEFT', '#__categories AS c on c.id = a.catid');
+
+			// Join on user table.
+			$query->select('u.name AS author')
+				->join('LEFT', '#__users AS u on u.id = a.created_by');
+
+			// Filter by language
+			if ($this->getState('filter.language'))
+			{
+				$query->where('a.language in (' . $db->quote(JFactory::getLanguage()->getTag()) . ',' . $db->quote('*') . ')');
+			}
+
+			// Join over the categories to get parent category titles
+			$query->select('parent.title as parent_title, parent.id as parent_id, parent.path as parent_route, parent.alias as parent_alias')
+				->join('LEFT', '#__categories as parent ON parent.id = c.parent_id');
+
+			// Join on voting table
+			$query->select('ROUND(v.rating_sum / v.rating_count, 0) AS rating, v.rating_count as rating_count')
+				->join('LEFT', '#__content_rating AS v ON a.id = v.content_id')
+
+				->where('a.id = ' . (int) $pk);
+
+			if ((!$user->authorise('core.edit.state', 'com_content')) && (!$user->authorise('core.edit', 'com_content')))
+			{
+				// Filter by start and end dates.
+				$nullDate = $db->quote($db->getNullDate());
+				$date = JFactory::getDate();
+
+				$nowDate = $db->quote($date->toSql());
+
+				$query->where('(a.publish_up = ' . $nullDate . ' OR a.publish_up <= ' . $nowDate . ')')
+					->where('(a.publish_down = ' . $nullDate . ' OR a.publish_down >= ' . $nowDate . ')');
+			}
+
+			// Join to check for category published state in parent categories up the tree
+			// If all categories are published, badcats.id will be null, and we just use the article state
+			$subquery = ' (SELECT cat.id as id FROM #__categories AS cat JOIN #__categories AS parent ';
+			$subquery .= 'ON cat.lft BETWEEN parent.lft AND parent.rgt ';
+			$subquery .= 'WHERE parent.extension = ' . $db->quote('com_content');
+			$subquery .= ' AND parent.published <= 0 GROUP BY cat.id)';
+			$query->join('LEFT OUTER', $subquery . ' AS badcats ON badcats.id = c.id');
+
+			// Filter by published state.
+			$published = $this->getState('filter.published');
+			$archived = $this->getState('filter.archived');
+
+			if (is_numeric($published))
+			{
+				$query->where('(a.state = ' . (int) $published . ' OR a.state =' . (int) $archived . ')');
+			}
+
+			$db->setQuery($query);
+			
 			try
 			{
-				$db = $this->getDbo();
-				$query = $db->getQuery(true)
-					->select(
-						$this->getState(
-							'item.select', 'a.id, a.asset_id, a.title, a.alias, a.introtext, a.fulltext, ' .
-							// If badcats is not null, this means that the article is inside an unpublished category
-							// In this case, the state is set to 0 to indicate Unpublished (even if the article state is Published)
-							'CASE WHEN badcats.id is null THEN a.state ELSE 0 END AS state, ' .
-							'a.catid, a.created, a.created_by, a.created_by_alias, ' .
-							// Use created if modified is 0
-							'CASE WHEN a.modified = ' . $db->quote($db->getNullDate()) . ' THEN a.created ELSE a.modified END as modified, ' .
-							'a.modified_by, a.checked_out, a.checked_out_time, a.publish_up, a.publish_down, ' .
-							'a.images, a.urls, a.attribs, a.version, a.ordering, ' .
-							'a.metakey, a.metadesc, a.access, a.hits, a.metadata, a.featured, a.language, a.xreference'
-						)
-					);
-				$query->from('#__content AS a');
-
-				// Join on category table.
-				$query->select('c.title AS category_title, c.alias AS category_alias, c.access AS category_access')
-					->join('LEFT', '#__categories AS c on c.id = a.catid');
-
-				// Join on user table.
-				$query->select('u.name AS author')
-					->join('LEFT', '#__users AS u on u.id = a.created_by');
-
-				// Filter by language
-				if ($this->getState('filter.language'))
-				{
-					$query->where('a.language in (' . $db->quote(JFactory::getLanguage()->getTag()) . ',' . $db->quote('*') . ')');
-				}
-
-				// Join over the categories to get parent category titles
-				$query->select('parent.title as parent_title, parent.id as parent_id, parent.path as parent_route, parent.alias as parent_alias')
-					->join('LEFT', '#__categories as parent ON parent.id = c.parent_id');
-
-				// Join on voting table
-				$query->select('ROUND(v.rating_sum / v.rating_count, 0) AS rating, v.rating_count as rating_count')
-					->join('LEFT', '#__content_rating AS v ON a.id = v.content_id')
-
-					->where('a.id = ' . (int) $pk);
-
-				if ((!$user->authorise('core.edit.state', 'com_content')) && (!$user->authorise('core.edit', 'com_content')))
-				{
-					// Filter by start and end dates.
-					$nullDate = $db->quote($db->getNullDate());
-					$date = JFactory::getDate();
-
-					$nowDate = $db->quote($date->toSql());
-
-					$query->where('(a.publish_up = ' . $nullDate . ' OR a.publish_up <= ' . $nowDate . ')')
-						->where('(a.publish_down = ' . $nullDate . ' OR a.publish_down >= ' . $nowDate . ')');
-				}
-
-				// Join to check for category published state in parent categories up the tree
-				// If all categories are published, badcats.id will be null, and we just use the article state
-				$subquery = ' (SELECT cat.id as id FROM #__categories AS cat JOIN #__categories AS parent ';
-				$subquery .= 'ON cat.lft BETWEEN parent.lft AND parent.rgt ';
-				$subquery .= 'WHERE parent.extension = ' . $db->quote('com_content');
-				$subquery .= ' AND parent.published <= 0 GROUP BY cat.id)';
-				$query->join('LEFT OUTER', $subquery . ' AS badcats ON badcats.id = c.id');
-
-				// Filter by published state.
-				$published = $this->getState('filter.published');
-				$archived = $this->getState('filter.archived');
-
-				if (is_numeric($published))
-				{
-					$query->where('(a.state = ' . (int) $published . ' OR a.state =' . (int) $archived . ')');
-				}
-
-				$db->setQuery($query);
-
 				$data = $db->loadObject();
+			}
+			catch (RuntimeException $e)
+			{
+				$data = array();
+				JFactory::getApplication()->enqueueMessage(JText::_('JERROR_AN_ERROR_HAS_OCCURRED'), 'error');
+			}
+			
+			if (empty($data))
+			{
+				return JError::raiseError(404, JText::_('COM_CONTENT_ERROR_ARTICLE_NOT_FOUND'));
+			}
 
-				if (empty($data))
+			// Check for published state if filter set.
+			if (((is_numeric($published)) || (is_numeric($archived))) && (($data->state != $published) && ($data->state != $archived)))
+			{
+				return JError::raiseError(404, JText::_('COM_CONTENT_ERROR_ARTICLE_NOT_FOUND'));
+			}
+
+			// Convert parameter fields to objects.
+			$registry = new Registry;
+			$registry->loadString($data->attribs);
+
+			$data->params = clone $this->getState('params');
+			$data->params->merge($registry);
+
+			$registry = new Registry;
+			$registry->loadString($data->metadata);
+			$data->metadata = $registry;
+
+			// Technically guest could edit an article, but lets not check that to improve performance a little.
+			if (!$user->get('guest'))
+			{
+				$userId = $user->get('id');
+				$asset = 'com_content.article.' . $data->id;
+
+				// Check general edit permission first.
+				if ($user->authorise('core.edit', $asset))
 				{
-					return JError::raiseError(404, JText::_('COM_CONTENT_ERROR_ARTICLE_NOT_FOUND'));
+					$data->params->set('access-edit', true);
 				}
 
-				// Check for published state if filter set.
-				if (((is_numeric($published)) || (is_numeric($archived))) && (($data->state != $published) && ($data->state != $archived)))
+				// Now check if edit.own is available.
+				elseif (!empty($userId) && $user->authorise('core.edit.own', $asset))
 				{
-					return JError::raiseError(404, JText::_('COM_CONTENT_ERROR_ARTICLE_NOT_FOUND'));
-				}
-
-				// Convert parameter fields to objects.
-				$registry = new Registry;
-				$registry->loadString($data->attribs);
-
-				$data->params = clone $this->getState('params');
-				$data->params->merge($registry);
-
-				$registry = new Registry;
-				$registry->loadString($data->metadata);
-				$data->metadata = $registry;
-
-				// Technically guest could edit an article, but lets not check that to improve performance a little.
-				if (!$user->get('guest'))
-				{
-					$userId = $user->get('id');
-					$asset = 'com_content.article.' . $data->id;
-
-					// Check general edit permission first.
-					if ($user->authorise('core.edit', $asset))
+					// Check for a valid user and that they are the owner.
+					if ($userId == $data->created_by)
 					{
 						$data->params->set('access-edit', true);
 					}
-
-					// Now check if edit.own is available.
-					elseif (!empty($userId) && $user->authorise('core.edit.own', $asset))
-					{
-						// Check for a valid user and that they are the owner.
-						if ($userId == $data->created_by)
-						{
-							$data->params->set('access-edit', true);
-						}
-					}
 				}
-
-				// Compute view access permissions.
-				if ($access = $this->getState('filter.access'))
-				{
-					// If the access filter has been set, we already know this user can view.
-					$data->params->set('access-view', true);
-				}
-				else
-				{
-					// If no access filter is set, the layout takes some responsibility for display of limited information.
-					$user = JFactory::getUser();
-					$groups = $user->getAuthorisedViewLevels();
-
-					if ($data->catid == 0 || $data->category_access === null)
-					{
-						$data->params->set('access-view', in_array($data->access, $groups));
-					}
-					else
-					{
-						$data->params->set('access-view', in_array($data->access, $groups) && in_array($data->category_access, $groups));
-					}
-				}
-
-				$this->_item[$pk] = $data;
 			}
-			catch (Exception $e)
+
+			// Compute view access permissions.
+			if ($access = $this->getState('filter.access'))
 			{
-				if ($e->getCode() == 404)
+				// If the access filter has been set, we already know this user can view.
+				$data->params->set('access-view', true);
+			}
+			else
+			{
+				// If no access filter is set, the layout takes some responsibility for display of limited information.
+				$user = JFactory::getUser();
+				$groups = $user->getAuthorisedViewLevels();
+
+				if ($data->catid == 0 || $data->category_access === null)
 				{
-					// Need to go thru the error handler to allow Redirect to work.
-					JError::raiseError(404, $e->getMessage());
+					$data->params->set('access-view', in_array($data->access, $groups));
 				}
 				else
 				{
-					$this->setError($e);
-					$this->_item[$pk] = false;
+					$data->params->set('access-view', in_array($data->access, $groups) && in_array($data->category_access, $groups));
 				}
 			}
+
+			$this->_item[$pk] = $data;
+		
 		}
 
 		return $this->_item[$pk];
