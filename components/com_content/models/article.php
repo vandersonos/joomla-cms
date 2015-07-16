@@ -158,10 +158,9 @@ class ContentModelArticle extends JModelItem
 			{
 				$data = $db->loadObject();
 			}
-			catch (RuntimeException $e)
+			catch (Exception $e)
 			{
-				$data = array();
-				JFactory::getApplication()->enqueueMessage(JText::_('JERROR_AN_ERROR_HAS_OCCURRED'), 'error');
+				throw new Exception(JText::_('JERROR_AN_ERROR_HAS_OCCURRED'), 404);
 			}
 			
 			if (empty($data))
