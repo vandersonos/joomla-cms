@@ -653,6 +653,7 @@ class PlgSystemDebug extends JPlugin
 			}
 		}
 
+		$db->disconnect();
 		return implode('', $html);
 	}
 
