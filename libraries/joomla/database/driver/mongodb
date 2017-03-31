@@ -1,0 +1,116 @@
+<?php
+/**
+ * @package     Joomla.Platform
+ * @subpackage  MongoDB
+ *
+ * @copyright   Copyright (C) 2005 - 2015 Open Source Matters, Inc. All rights reserved.
+ * @license     GNU General Public License version 2 or later; see LICENSE
+ */
+defined('JPATH_PLATFORM') or die;
+/**
+ * Joomla Platform MongoDB Interface
+ *
+ * @since  __DEPLOY_VERSION__
+ */
+interface JMongoDBInterface
+{
+	/**
+	 * Test to see if the connector is available.
+	 *
+	 * @return  boolean  True on success, false otherwise.
+	 *
+	 * @since   __DEPLOY_VERSION__
+	 */
+	public static function isSupported();
+}
+
+/**
+ * Joomla Platform MongoDB Driver Class
+ *
+ * @since  __DEPLOY_VERSION__
+ *
+ */
+abstract class JMongoDB implements JMongoDBInterface
+{
+	protected static $instances = array();
+	/**
+	 * The connector instance.
+	 *
+	 * @param   array  $options  Array of MongoDB options with keys: host, user, password, database, etc.
+	 *
+	 * @return  boolean  True on success, false otherwise.
+	 *
+	 * @since   __DEPLOY_VERSION__
+	 */
+
+	public static function getInstance($options = array())
+	{
+		// for WIN 32
+		//ini_set('mongo.long_as_object', 1);
+		ini_set('mongo.long_as_object', strlen(decbin(~0)) == 32 ? 1 : 0);
+		ini_set('mongo.native_long', strlen(decbin(~0)) == 32 ? 0 : 1);
+
+		// Sanitize the mongodb connector options.
+		$options['host']   = (isset($options['host'])) ? $options['host'] : 'localhost';
+		$options['port']   = (isset($options['port'])) ? $options['port'] : 27017;
+		$options['user']   = (isset($options['user'])) ? $options['user'] : null;
+		$options['db']     = (isset($options['db'])) ? $options['db'] : 'test';
+
+		if ($options['user'])
+		{
+			$uri = "mongodb://" . $options['user'] . ":" . $options['auth'] . "@" . $options['host'] . ":" . $options['port'] . "/" . $options['db'];
+		}
+		else
+		{
+			$uri = "mongodb://" . $options['host'] . ":" . $options['port'] . "/" . $options['db'];
+		}
+		// $options = array("connectTimeoutMS" => 30000, "replicaSet" => "replicaSetName");
+		$coptions = array("connectTimeoutMS" => 5000);
+		$is_supported = self::isSupported();
+
+		if (!$is_supported)
+		{
+			throw new RuntimeException('MongoDB not supported');
+		}
+
+		$signature = md5(serialize($uri));
+
+		if (empty(self::$instances[$signature]))
+		{
+			try
+			{
+				$instance = new MongoClient($uri, $coptions);
+			}
+			catch (MongoConnectionException $e)
+			{
+				throw new RuntimeException($e->getMessage());
+			}
+			/**
+			try 
+			{ 
+				$db = $instance->selectDB($options['db']); 
+			} 
+			catch (RuntimeException $e) 
+			{
+				throw new RuntimeException ('MongoDB unable to select db'); 
+			} 
+			*/
+			// Set the new connector to the global instances based on signature.
+			self::$instances[$signature] = $instance;
+		}
+
+		return self::$instances[$signature];
+	}
+
+	/**
+	 * Test to see if the connector is supported.
+	 *
+	 * @return  boolean  True on success, false otherwise.
+	 *
+	 * @since   __DEPLOY_VERSION__
+	 */
+	public static function isSupported()
+	{
+		return (extension_loaded('mongo') && class_exists('MongoClient'));
+	}
+}
